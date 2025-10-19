@@ -1,0 +1,17 @@
+[build]
+  command = "npm run build"
+  functions = "dist/netlify/functions"
+  publish = "public"
+
+# 🔁 Redireciona chamadas /api/* para as funções serverless
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# ⚙️ Configuração de ambiente local (netlify dev)
+[dev]
+  functions = "dist/netlify/functions"
+  publish = "public"
+  port = 4000
+  framework = "none"
