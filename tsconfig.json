@@ -1,12 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "CommonJS",
-    "lib": ["ESNext"],
-    "strict": true,
-    "esModuleInterop": true,
-    "moduleResolution": "node",
-    "outDir": "./dist"
+    "target": "ES2020",                   // Node moderno compatível
+    "module": "CommonJS",                 // Necessário para Node
+    "lib": ["ES2020", "DOM"],             // Adiciona tipos do DOM e JS moderno
+    "strict": true,                        // Checagem rigorosa de tipos
+    "esModuleInterop": true,               // Importação de CommonJS
+    "moduleResolution": "node",            // Resolução de módulos estilo Node
+    "outDir": "./dist",                     // Saída compilada
+    "rootDir": ".",                         // Raiz do projeto
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,              // Permite importar JSON
+    "skipLibCheck": true                    // Ignora checagem de tipos de libs externas
   },
-  "include": ["server.ts"]
+  "include": ["server.ts", "src/**/*.ts"], // Arquivos TS a compilar
+  "exclude": ["node_modules", "dist"]      // Evita recompilar dependências ou saída
 }
