@@ -40,18 +40,19 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const node_fetch_1 = __importDefault(require("node-fetch"));
 const uuid_1 = require("uuid");
-// 💡 AJUSTE 1: Usa a sintaxe correta para módulos CommonJS
 const dotenv = __importStar(require("dotenv"));
-// --- Carrega variáveis do .env ---
 dotenv.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 4000;
 // --- Variáveis de Configuração ---
 const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-// URL do Google Apps Script (DEVE ESTAR NO SEU .env)
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+// --- HEALTH CHECK (rota para o Render acordar) ---
+app.get("/health", (req, res) => {
+    res.status(200).json({ status: "alive" });
+});
 // --- FUNÇÃO PARA SALVAR LEAD COM APPS SCRIPT ---
 const saveLeadWithAppsScript = async (email, whatsapp) => {
     if (!APPS_SCRIPT_URL) {
@@ -61,12 +62,11 @@ const saveLeadWithAppsScript = async (email, whatsapp) => {
     try {
         console.log(`Tentando salvar lead via Apps Script para ${email}...`);
         const response = await (0, node_fetch_1.default)(APPS_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email, whatsapp }),
         });
-        // 💡 AJUSTE 3: Faz o 'cast' para a interface definida
-        const result = await response.json();
+        const result = (await response.json());
         if (result.success) {
             console.log("✅ Contato salvo com sucesso no Google Sheets.");
         }
@@ -85,10 +85,7 @@ app.post("/api/pix", async (req, res) => {
         return res.status(400).json({ error: "E-mail e WhatsApp são obrigatórios." });
     }
     try {
-        // 1. REGISTRA O CONTATO NA PLANILHA (VIA APPS SCRIPT)
-        // Chamado antes de gerar o PIX para garantir que o lead seja capturado.
         await saveLeadWithAppsScript(email, whatsapp);
-        // 2. Geração do PIX no Mercado Pago
         const mpBody = {
             transaction_amount: amount,
             description,
@@ -106,10 +103,10 @@ app.post("/api/pix", async (req, res) => {
         });
         const data = await response.json();
         if (!response.ok) {
-            // Se a MP falhar, retorna o erro
-            return res.status(response.status).json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
+            return res
+                .status(response.status)
+                .json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
         }
-        // 3. Retorna dados PIX para o frontend
         res.json({
             id: data.id,
             status: data.status,
@@ -125,19 +122,16 @@ app.post("/api/pix", async (req, res) => {
             res.status(500).json({ error: "Erro desconhecido" });
     }
 });
-// --- ENDPOINT STATUS PIX (SEM LÓGICA DE LINKS) ---
+// --- ENDPOINT STATUS PIX ---
 app.get("/api/pix/:id", async (req, res) => {
     const { id } = req.params;
     try {
-        const response = await (0, node_fetch_1.default)(`https://api.mercadopago.com/v1/payments/${id}`, {
-            headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
-        });
+        const response = await (0, node_fetch_1.default)(`https://api.mercadopago.com/v1/payments/${id}`, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
         const data = await response.json();
         console.log("Status PIX data:", data);
-        // Retorna apenas o status e ID.
         res.json({
             id: data?.id,
-            status: data?.status, // pending, in_process ou approved
+            status: data?.status,
         });
     }
     catch (err) {
