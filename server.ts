@@ -27,8 +27,14 @@ app.get("/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "alive" });
 });
 
-// --- FUNÇÃO PARA SALVAR LEAD COM APPS SCRIPT ---
-const saveLeadWithAppsScript = async (email: string, whatsapp: string) => {
+// --- FUNÇÃO PARA SALVAR LEAD COM APPS SCRIPT (ATUALIZADA) ---
+const saveLeadWithAppsScript = async (
+  email: string,
+  whatsapp: string,
+  description?: string,
+  paymentId?: string,
+  pixCopyPaste?: string
+) => {
   if (!APPS_SCRIPT_URL) {
     console.warn("Variável APPS_SCRIPT_URL não definida. Contatos não serão salvos.");
     return;
@@ -40,7 +46,13 @@ const saveLeadWithAppsScript = async (email: string, whatsapp: string) => {
     const response = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, whatsapp }),
+      body: JSON.stringify({
+        email,
+        whatsapp,
+        description,
+        paymentId,
+        pixCopyPaste,
+      }),
     });
 
     const result = (await response.json()) as AppsScriptResponse;
@@ -55,7 +67,7 @@ const saveLeadWithAppsScript = async (email: string, whatsapp: string) => {
   }
 };
 
-// --- ENDPOINT CRIAR PIX ---
+// --- ENDPOINT CRIAR PIX (ATUALIZADO) ---
 app.post("/api/pix", async (req: Request, res: Response) => {
   const { amount, description, email, whatsapp } = req.body;
 
@@ -64,8 +76,6 @@ app.post("/api/pix", async (req: Request, res: Response) => {
   }
 
   try {
-    await saveLeadWithAppsScript(email, whatsapp);
-
     const mpBody = {
       transaction_amount: amount,
       description,
@@ -90,6 +100,15 @@ app.post("/api/pix", async (req: Request, res: Response) => {
         .status(response.status)
         .json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
     }
+
+    // Salva lead + pagamento na planilha
+    await saveLeadWithAppsScript(
+      email,
+      whatsapp,
+      description,
+      data.id, // ID do pagamento
+      data.point_of_interaction?.transaction_data?.qr_code // PIX Copia e Cola
+    );
 
     res.json({
       id: data.id,
