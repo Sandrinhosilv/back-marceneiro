@@ -1,0 +1,18 @@
+{
+  "amount": 100,
+  "description": "Plano Premium",
+  "email": "teste@email.com",
+  "whatsapp": "11999999999",
+  "utm_source": "FB",
+  "utm_medium": "Conjunto Y|654321",
+  "utm_campaign": "Campanha X|123456",
+  "utm_content": "Anuncio Z|987654",
+  "utm_term": "feed_ig",
+  "campaign_name": "Campanha X",
+  "campaign_id": "123456",
+  "adset_name": "Conjunto Y",
+  "adset_id": "654321",
+  "ad_name": "Anuncio Z",
+  "ad_id": "987654",
+  "placement": "feed_ig"
+}

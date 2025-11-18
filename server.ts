@@ -220,7 +220,7 @@ app.post("/api/pix", async (req: Request, res: Response) => {
       amount,
       paymentId: data.id,
       pixCopyPaste: data.point_of_interaction?.transaction_data?.qr_code,
-      utms,
+      ...utms,
     });
 
     res.json({
