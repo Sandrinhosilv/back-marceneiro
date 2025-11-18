@@ -15,6 +15,7 @@ const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const FB_PIXEL_ID = process.env.FB_PIXEL_ID;
 const FB_ACCESS_TOKEN = process.env.FB_ACCESS_TOKEN;
+const WEBHOOK_URL = process.env.WEBHOOK_URL; // Novo: webhook externo
 
 interface AppsScriptResponse {
   success: boolean;
@@ -119,6 +120,27 @@ const sendFacebookConversion = async (
   }
 };
 
+// --- FUNÇÃO PARA ENVIAR LEAD PARA WEBHOOK EXTERNO ---
+const sendToWebhook = async (payload: Record<string, any>) => {
+  if (!WEBHOOK_URL) return;
+
+  try {
+    const response = await fetch(WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.error("❌ Erro ao enviar lead para Webhook:", response.statusText);
+    } else {
+      console.log("✅ Lead enviado para Webhook externo");
+    }
+  } catch (error) {
+    console.error("🚨 Erro de rede ao enviar lead para Webhook:", error);
+  }
+};
+
 // --- ENDPOINT CRIAR PIX ---
 app.post("/api/pix", async (req: Request, res: Response) => {
   const { amount, description, email, whatsapp, ...rest } = req.body;
@@ -133,7 +155,7 @@ app.post("/api/pix", async (req: Request, res: Response) => {
     if (key.startsWith("utm_")) utms[key] = rest[key];
   }
 
-  // --- Separar dados de campanha, adset e anúncio do Facebook ---
+  // --- Separar dados de campanha, adset e anúncio ---
   if (utms.utm_campaign) {
     const [campaign_name, campaign_id] = utms.utm_campaign.split("|");
     utms.campaign_name = campaign_name;
@@ -177,7 +199,7 @@ app.post("/api/pix", async (req: Request, res: Response) => {
         .json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
     }
 
-    // Salva lead + pagamento + UTMs na planilha
+    // Salva lead + pagamento + UTMs no Google Sheets
     await saveLeadWithAppsScript(
       email,
       whatsapp,
@@ -187,8 +209,19 @@ app.post("/api/pix", async (req: Request, res: Response) => {
       utms
     );
 
-    // Envia evento para o Facebook CAPI
+    // Envia evento para Facebook CAPI
     await sendFacebookConversion(email, whatsapp, amount, utms);
+
+    // Envia para Webhook externo
+    await sendToWebhook({
+      email,
+      whatsapp,
+      description,
+      amount,
+      paymentId: data.id,
+      pixCopyPaste: data.point_of_interaction?.transaction_data?.qr_code,
+      utms,
+    });
 
     res.json({
       id: data.id,
