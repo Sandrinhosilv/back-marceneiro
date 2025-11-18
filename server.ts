@@ -15,7 +15,7 @@ const ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 const FB_PIXEL_ID = process.env.FB_PIXEL_ID;
 const FB_ACCESS_TOKEN = process.env.FB_ACCESS_TOKEN;
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // Novo: webhook externo
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 interface AppsScriptResponse {
   success: boolean;
@@ -26,16 +26,16 @@ interface AppsScriptResponse {
 app.use(cors());
 app.use(express.json());
 
-// --- HEALTH CHECK ---
+// --- HEALTH ---
 app.get("/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "alive" });
 });
 
-// --- HASH SHA256 para Facebook CAPI ---
+// --- HASH SHA256 CAPI ---
 const hashSHA256 = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
 
-// --- FUNÇÃO PARA SALVAR LEAD COM APPS SCRIPT ---
+// --- SALVAR LEAD ---
 const saveLeadWithAppsScript = async (
   email: string,
   whatsapp: string,
@@ -45,13 +45,11 @@ const saveLeadWithAppsScript = async (
   utms?: Record<string, string>
 ) => {
   if (!APPS_SCRIPT_URL) {
-    console.warn("Variável APPS_SCRIPT_URL não definida. Contatos não serão salvos.");
+    console.warn("APPS_SCRIPT_URL não definida");
     return;
   }
 
   try {
-    console.log(`Tentando salvar lead via Apps Script para ${email}...`);
-
     const response = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -68,16 +66,16 @@ const saveLeadWithAppsScript = async (
     const result = (await response.json()) as AppsScriptResponse;
 
     if (result.success) {
-      console.log("✅ Contato salvo com sucesso no Google Sheets.");
+      console.log("✅ Lead salvo no Google Sheets.");
     } else {
-      console.error("❌ Erro do Apps Script:", result.error);
+      console.error("❌ Erro Apps Script:", result.error);
     }
   } catch (error) {
-    console.error("🚨 Erro de rede ao enviar lead para Apps Script:", error);
+    console.error("Erro ao enviar lead para Apps Script:", error);
   }
 };
 
-// --- FUNÇÃO PARA ENVIAR EVENTO PARA FACEBOOK CAPI ---
+// --- FACEBOOK CAPI ---
 const sendFacebookConversion = async (
   email: string,
   whatsapp: string,
@@ -114,13 +112,13 @@ const sendFacebookConversion = async (
         body: JSON.stringify(payload),
       }
     );
-    console.log("✅ Evento enviado para o Facebook CAPI");
+    console.log("✅ Evento enviado ao Facebook CAPI");
   } catch (error) {
-    console.error("🚨 Erro ao enviar evento para Facebook CAPI:", error);
+    console.error("Erro CAPI:", error);
   }
 };
 
-// --- FUNÇÃO PARA ENVIAR LEAD PARA WEBHOOK EXTERNO ---
+// --- WEBHOOK EXTERNO ---
 const sendToWebhook = async (payload: Record<string, any>) => {
   if (!WEBHOOK_URL) return;
 
@@ -132,16 +130,16 @@ const sendToWebhook = async (payload: Record<string, any>) => {
     });
 
     if (!response.ok) {
-      console.error("❌ Erro ao enviar lead para Webhook:", response.statusText);
+      console.error("❌ Erro Webhook:", response.statusText);
     } else {
       console.log("✅ Lead enviado para Webhook externo");
     }
   } catch (error) {
-    console.error("🚨 Erro de rede ao enviar lead para Webhook:", error);
+    console.error("Erro ao enviar para webhook:", error);
   }
 };
 
-// --- ENDPOINT CRIAR PIX ---
+// --- CRIAR PIX ---
 app.post("/api/pix", async (req: Request, res: Response) => {
   const { amount, description, email, whatsapp, ...rest } = req.body;
 
@@ -149,13 +147,13 @@ app.post("/api/pix", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "E-mail e WhatsApp são obrigatórios." });
   }
 
-  // --- Captura todas as UTMs ---
+  // Capturar UTMs
   const utms: Record<string, string> = {};
   for (const key in rest) {
     if (key.startsWith("utm_")) utms[key] = rest[key];
   }
 
-  // --- Separar dados de campanha, adset e anúncio ---
+  // Extrair dados da campanha
   if (utms.utm_campaign) {
     const [campaign_name, campaign_id] = utms.utm_campaign.split("|");
     utms.campaign_name = campaign_name;
@@ -199,7 +197,7 @@ app.post("/api/pix", async (req: Request, res: Response) => {
         .json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
     }
 
-    // Salva lead + pagamento + UTMs no Google Sheets
+    // Salvar lead
     await saveLeadWithAppsScript(
       email,
       whatsapp,
@@ -209,10 +207,10 @@ app.post("/api/pix", async (req: Request, res: Response) => {
       utms
     );
 
-    // Envia evento para Facebook CAPI
+    // CAPI
     await sendFacebookConversion(email, whatsapp, amount, utms);
 
-    // Envia para Webhook externo
+    // Webhook externo
     await sendToWebhook({
       email,
       whatsapp,
@@ -230,15 +228,12 @@ app.post("/api/pix", async (req: Request, res: Response) => {
       qr_code_base64: data.point_of_interaction?.transaction_data?.qr_code_base64,
     });
   } catch (err: unknown) {
-    console.error("Erro no ENDPOINT /api/pix:", err);
-    if (err instanceof Error)
-      res.status(500).json({ error: err.message });
-    else
-      res.status(500).json({ error: "Erro desconhecido" });
+    console.error("Erro no /api/pix:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Erro desconhecido" });
   }
 });
 
-// --- ENDPOINT STATUS PIX ---
+// --- STATUS PIX ---
 app.get("/api/pix/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
@@ -249,18 +244,15 @@ app.get("/api/pix/:id", async (req: Request, res: Response) => {
     );
 
     const data: any = await response.json();
-    console.log("Status PIX data:", data);
+    console.log("Status PIX:", data);
 
     res.json({
       id: data?.id,
       status: data?.status,
     });
   } catch (err: unknown) {
-    console.error("Erro no ENDPOINT /api/pix/:id:", err);
-    if (err instanceof Error)
-      res.status(500).json({ error: err.message });
-    else
-      res.status(500).json({ error: "Erro desconhecido" });
+    console.error("Erro no /api/pix/:id:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Erro desconhecido" });
   }
 });
 
