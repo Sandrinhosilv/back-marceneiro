@@ -42,12 +42,10 @@ const saveLeadWithAppsScript = async (
   description?: string,
   paymentId?: string,
   pixCopyPaste?: string,
-  utms?: Record<string, string>
+  utms?: Record<string, string>,
+  purchaseSent?: boolean
 ) => {
-  if (!APPS_SCRIPT_URL) {
-    console.warn("APPS_SCRIPT_URL não definida");
-    return;
-  }
+  if (!APPS_SCRIPT_URL) return;
 
   try {
     const response = await fetch(APPS_SCRIPT_URL, {
@@ -59,24 +57,21 @@ const saveLeadWithAppsScript = async (
         description,
         paymentId,
         pixCopyPaste,
+        purchase_sent: purchaseSent ? "true" : "false",
         ...utms,
       }),
     });
 
     const result = (await response.json()) as AppsScriptResponse;
-
-    if (result.success) {
-      console.log("✅ Lead salvo no Google Sheets.");
-    } else {
-      console.error("❌ Erro Apps Script:", result.error);
-    }
+    console.log(result.success ? "✅ Lead salvo/atualizado no Google Sheets." : `❌ Erro Apps Script: ${result.error}`);
   } catch (error) {
     console.error("Erro ao enviar lead para Apps Script:", error);
   }
 };
 
 // --- FACEBOOK CAPI ---
-const sendFacebookConversion = async (
+const sendFacebookEvent = async (
+  eventName: "InitiateCheckout" | "Purchase",
   email: string,
   whatsapp: string,
   amount: number,
@@ -87,7 +82,7 @@ const sendFacebookConversion = async (
   const payload = {
     data: [
       {
-        event_name: "Lead",
+        event_name: eventName,
         event_time: Math.floor(Date.now() / 1000),
         user_data: {
           em: [hashSHA256(email)],
@@ -106,13 +101,9 @@ const sendFacebookConversion = async (
   try {
     await fetch(
       `https://graph.facebook.com/v16.0/${FB_PIXEL_ID}/events?access_token=${FB_ACCESS_TOKEN}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
     );
-    console.log("✅ Evento enviado ao Facebook CAPI");
+    console.log(`✅ Evento ${eventName} enviado ao Facebook CAPI`);
   } catch (error) {
     console.error("Erro CAPI:", error);
   }
@@ -121,19 +112,13 @@ const sendFacebookConversion = async (
 // --- WEBHOOK EXTERNO ---
 const sendToWebhook = async (payload: Record<string, any>) => {
   if (!WEBHOOK_URL) return;
-
   try {
     const response = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-
-    if (!response.ok) {
-      console.error("❌ Erro Webhook:", response.statusText);
-    } else {
-      console.log("✅ Lead enviado para Webhook externo");
-    }
+    console.log(response.ok ? "✅ Lead enviado para Webhook externo" : `❌ Erro Webhook: ${response.statusText}`);
   } catch (error) {
     console.error("Erro ao enviar para webhook:", error);
   }
@@ -142,84 +127,46 @@ const sendToWebhook = async (payload: Record<string, any>) => {
 // --- CRIAR PIX ---
 app.post("/api/pix", async (req: Request, res: Response) => {
   const { amount, description, email, whatsapp, ...rest } = req.body;
+  if (!email || !whatsapp) return res.status(400).json({ error: "E-mail e WhatsApp são obrigatórios." });
 
-  if (!email || !whatsapp) {
-    return res.status(400).json({ error: "E-mail e WhatsApp são obrigatórios." });
-  }
-
-  // Capturar UTMs
   const utms: Record<string, string> = {};
-  for (const key in rest) {
-    if (key.startsWith("utm_")) utms[key] = rest[key];
-  }
+  for (const key in rest) if (key.startsWith("utm_") || ["fbclid", "utm_id", "i"].includes(key)) utms[key] = rest[key];
 
-  // Extrair dados da campanha
   if (utms.utm_campaign) {
     const [campaign_name, campaign_id] = utms.utm_campaign.split("|");
-    utms.campaign_name = campaign_name;
-    utms.campaign_id = campaign_id;
+    utms.campaign_name = campaign_name || utms.utm_campaign;
+    utms.campaign_id = campaign_id || "";
   }
   if (utms.utm_medium) {
     const [adset_name, adset_id] = utms.utm_medium.split("|");
-    utms.adset_name = adset_name;
-    utms.adset_id = adset_id;
+    utms.adset_name = adset_name || utms.utm_medium;
+    utms.adset_id = adset_id || "";
   }
   if (utms.utm_content) {
     const [ad_name, ad_id] = utms.utm_content.split("|");
-    utms.ad_name = ad_name;
-    utms.ad_id = ad_id;
+    utms.ad_name = ad_name || utms.utm_content;
+    utms.ad_id = ad_id || "";
   }
   utms.placement = utms.utm_term || "";
 
   try {
-    const mpBody = {
-      transaction_amount: amount,
-      description,
-      payment_method_id: "pix",
-      payer: { email },
-    };
-
+    const mpBody = { transaction_amount: amount, description, payment_method_id: "pix", payer: { email } };
     const response = await fetch("https://api.mercadopago.com/v1/payments", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": uuid(),
-      },
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, "Content-Type": "application/json", "X-Idempotency-Key": uuid() },
       body: JSON.stringify(mpBody),
     });
-
     const data: any = await response.json();
-
-    if (!response.ok) {
-      return res
-        .status(response.status)
-        .json({ error: data.message || "Erro ao criar PIX no Mercado Pago" });
-    }
+    if (!response.ok) return res.status(response.status).json({ error: data.message || "Erro ao criar PIX" });
 
     // Salvar lead
-    await saveLeadWithAppsScript(
-      email,
-      whatsapp,
-      description,
-      data.id,
-      data.point_of_interaction?.transaction_data?.qr_code,
-      utms
-    );
+    await saveLeadWithAppsScript(email, whatsapp, description, data.id, data.point_of_interaction?.transaction_data?.qr_code, utms, false);
 
-    // CAPI
-    await sendFacebookConversion(email, whatsapp, amount, utms);
+    // Disparar InitiateCheckout
+    await sendFacebookEvent("InitiateCheckout", email, whatsapp, amount, utms);
 
     // Webhook externo
-    await sendToWebhook({
-      email,
-      whatsapp,
-      description,
-      amount,
-      paymentId: data.id,
-      pixCopyPaste: data.point_of_interaction?.transaction_data?.qr_code,
-      ...utms,
-    });
+    await sendToWebhook({ email, whatsapp, description, amount, paymentId: data.id, pixCopyPaste: data.point_of_interaction?.transaction_data?.qr_code, ...utms });
 
     res.json({
       id: data.id,
@@ -233,29 +180,29 @@ app.post("/api/pix", async (req: Request, res: Response) => {
   }
 });
 
-// --- STATUS PIX ---
+// --- STATUS PIX (dispara Purchase quando aprovado) ---
 app.get("/api/pix/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
-
   try {
-    const response = await fetch(
-      `https://api.mercadopago.com/v1/payments/${id}`,
-      { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } }
-    );
-
+    const response = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
     const data: any = await response.json();
     console.log("Status PIX:", data);
 
-    res.json({
-      id: data?.id,
-      status: data?.status,
-    });
+    // Se aprovado e ainda não enviou Purchase
+    if (data.status === "approved" && !data.metadata?.purchase_sent) {
+      const { email, whatsapp, amount, utms } = data.metadata || {};
+      if (email && whatsapp && amount) {
+        await sendFacebookEvent("Purchase", email, whatsapp, amount, utms || {});
+        // Marcar como enviado
+        await saveLeadWithAppsScript(email, whatsapp, data.description, data.id, data.point_of_interaction?.transaction_data?.qr_code, utms || {}, true);
+      }
+    }
+
+    res.json({ id: data?.id, status: data?.status });
   } catch (err: unknown) {
     console.error("Erro no /api/pix/:id:", err);
     res.status(500).json({ error: err instanceof Error ? err.message : "Erro desconhecido" });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Backend PIX rodando em http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Backend PIX rodando em http://localhost:${PORT}`));
